@@ -52,3 +52,12 @@ vega-data/
 vscode-win32-x64/
 node_modules/
 __pycache__/
+
+# === PERSONALIZATION, MEMORY & CONTACTS ===
+*memory*.json
+*profile*.json
+*contacts*.json
+career_vault/
+app_profile*/
+documents/
+.stakpak/
