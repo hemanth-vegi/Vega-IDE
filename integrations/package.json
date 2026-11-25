@@ -1,0 +1,17 @@
+{
+  "name": "vega-context-provider",
+  "publisher": "vega",
+  "version": "1.0.0",
+  "displayName": "Vega Context Bridge",
+  "description": "Optional loopback-only read context for Vega desktop integration.",
+  "engines": {
+    "vscode": "^1.70.0"
+  },
+  "extensionKind": [
+    "ui"
+  ],
+  "activationEvents": [
+    "onStartupFinished"
+  ],
+  "main": "./vega_context_provider.js"
+}

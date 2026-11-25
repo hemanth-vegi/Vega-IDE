@@ -1,154 +1,134 @@
+/**
+ * Vega IDE Essential Extension Synchronization Module
+ * 
+ * Synchronizes required developer extensions from the local environment into ~/.vega/extensions.
+ * Strictly READS from ~/.vscode/extensions without modifying or deleting anything inside it.
+ */
+
 const fs = require('fs');
 const path = require('path');
 const cp = require('child_process');
+const config = require('./vega.config.js');
 
-console.log('=== PHASE 2: BAKING IN ESSENTIAL EXTENSIONS ===');
+function syncEssentialExtensions(options = {}) {
+  const verbose = options.verbose !== false;
+  if (verbose) console.log('=== PHASE: SYNCING ESSENTIAL EXTENSIONS ===');
 
-const srcDir = 'C:/Users/heman/.vscode/extensions';
-const destDir = 'C:/Users/heman/.vega/extensions';
+  const srcDir = config.VSCODE_EXTENSIONS_DIR;
+  const destDir = config.VEGA_EXTENSIONS_DIR;
 
-if (!fs.existsSync(destDir)) {
-  fs.mkdirSync(destDir, { recursive: true });
-}
-
-const requiredIds = [
-  // AI & Orchestrator Stack
-  'continue.continue',
-  'saoudrizwan.claude-dev',
-  'orchestrator-chat',
-  'vega-ai-monitor',
-
-  // Phase A: Core Daily Stack
-  'charliermarsh.ruff',
-  'redhat.vscode-yaml',
-  'timonwong.shellcheck',
-  'qwtel.sqlite-viewer',
-
-  // Phase B: Roadmap & DevOps Stack
-  'ms-python.python',
-  'ms-azuretools.vscode-docker',
-  'github.vscode-github-actions',
-  'ms-kubernetes-tools.vscode-kubernetes-tools',
-
-  // Language & Runtime Stack
-  'ms-python.vscode-pylance',
-  'ms-python.debugpy',
-  'ms-toolsai.jupyter',
-  'eamodio.gitlens',
-  'usernamehw.errorlens',
-  'esbenp.prettier-vscode',
-  'ms-vscode.powershell',
-  'ms-vscode-remote.remote-ssh',
-  'visualstudiotoolsforunity.vstuc',
-
-  // Cloud & OpenShift Stack (Resume-Aligned)
-  'amazonwebservices.aws-toolkit-vscode',
-  'redhat.vscode-openshift-connector',
-  'redhat.vscode-redhat-account'
-];
-
-function copyRecursiveSync(src, dest) {
-  if (fs.existsSync(dest)) return; // already exists
-  if (fs.statSync(src).isDirectory()) {
-    fs.mkdirSync(dest, { recursive: true });
-    fs.readdirSync(src).forEach(item => copyRecursiveSync(path.join(src, item), path.join(dest, item)));
-  } else {
-    fs.copyFileSync(src, dest);
-  }
-}
-
-const srcEntries = fs.existsSync(srcDir) ? fs.readdirSync(srcDir) : [];
-const destEntries = fs.readdirSync(destDir);
-const foundMap = {};
-
-requiredIds.forEach(id => {
-  // Check if already present in destDir
-  const destMatch = destEntries.find(entry => entry.toLowerCase().startsWith(id.toLowerCase()));
-  if (destMatch) {
-    foundMap[id] = destMatch;
-    console.log(`[VERIFIED IN .VEGA] ${id} -> ${destMatch}`);
-    return;
+  if (!fs.existsSync(destDir)) {
+    fs.mkdirSync(destDir, { recursive: true });
   }
 
-  // Check if present in srcDir (.vscode/extensions)
-  const srcMatch = srcEntries.find(entry => entry.toLowerCase().startsWith(id.toLowerCase()));
-  if (srcMatch) {
-    foundMap[id] = srcMatch;
-    console.log(`[VERIFIED IN .VSCODE] ${id} -> ${srcMatch}`);
-    const sourcePath = path.join(srcDir, srcMatch);
-    const destPath = path.join(destDir, srcMatch);
-    copyRecursiveSync(sourcePath, destPath);
-    console.log(`[SYNCED TO .VEGA] ${srcMatch}`);
-    return;
-  }
+  const requiredIds = config.REQUIRED_EXTENSIONS;
+  const srcEntries = fs.existsSync(srcDir) ? fs.readdirSync(srcDir) : [];
+  const destEntries = fs.readdirSync(destDir);
+  const foundMap = {};
 
-  // Attempt CLI installation into destDir
-  try {
-    console.log(`[INSTALLING EXTENSION] Attempting CLI install for ${id}...`);
-    cp.execSync(`code --extensions-dir "${destDir}" --install-extension ${id}`, { stdio: 'inherit' });
-    const updatedDestEntries = fs.readdirSync(destDir);
-    const installedMatch = updatedDestEntries.find(entry => entry.toLowerCase().startsWith(id.toLowerCase()));
-    if (installedMatch) {
-      foundMap[id] = installedMatch;
-      console.log(`[SUCCESSFULLY INSTALLED] ${id} -> ${installedMatch}`);
-    } else {
-      console.warn(`[WARNING] Installation command completed but ${id} not found in ${destDir}`);
+  requiredIds.forEach(id => {
+    // 1. Check if already present in ~/.vega/extensions
+    const destMatch = destEntries.find(entry => entry.toLowerCase().startsWith(id.toLowerCase()));
+    if (destMatch) {
+      foundMap[id] = destMatch;
+      if (verbose) console.log(`[VERIFIED IN .VEGA] ${id} -> ${destMatch}`);
+      return;
     }
-  } catch (err) {
-    console.warn(`[MISSING] ${id} could not be installed: ${err.message}`);
-  }
-});
 
-// Update .vega/extensions/extensions.json
-const srcExtJsonPath = path.join(srcDir, 'extensions.json');
-const destExtJsonPath = path.join(destDir, 'extensions.json');
+    // 2. Check if present in ~/.vscode/extensions (READ-ONLY source)
+    const srcMatch = srcEntries.find(entry => entry.toLowerCase().startsWith(id.toLowerCase()));
+    if (srcMatch) {
+      foundMap[id] = srcMatch;
+      const sourcePath = path.join(srcDir, srcMatch);
+      const destPath = path.join(destDir, srcMatch);
+      config.copyRecursiveSync(sourcePath, destPath);
+      if (verbose) console.log(`[SYNCED TO .VEGA] ${srcMatch}`);
+      return;
+    }
 
-let vegaList = [];
-if (fs.existsSync(destExtJsonPath)) {
-  try {
-    vegaList = JSON.parse(fs.readFileSync(destExtJsonPath, 'utf8'));
-  } catch (e) {
-    vegaList = [];
-  }
-} else if (fs.existsSync(srcExtJsonPath)) {
-  try {
-    vegaList = JSON.parse(fs.readFileSync(srcExtJsonPath, 'utf8'));
-  } catch (e) {
-    vegaList = [];
-  }
-}
-
-// Make sure all required extensions currently present in destDir are in extensions.json
-const currentDestEntries = fs.readdirSync(destDir);
-requiredIds.forEach(id => {
-  const match = currentDestEntries.find(entry => entry.toLowerCase().startsWith(id.toLowerCase()));
-  if (match) {
-    const existing = vegaList.some(item => {
-      const existingId = (item.identifier && item.identifier.id) || '';
-      return existingId.toLowerCase() === id.toLowerCase() || (item.relativeLocation && item.relativeLocation.toLowerCase().startsWith(id.toLowerCase()));
-    });
-    if (!existing) {
-      // Read package.json inside extension if available to get version
-      let version = "1.0.0";
-      const pkgPath = path.join(destDir, match, 'package.json');
-      if (fs.existsSync(pkgPath)) {
-        try {
-          const pkg = JSON.parse(fs.readFileSync(pkgPath, 'utf8'));
-          version = pkg.version || version;
-        } catch {}
+    // 3. Attempt CLI installation into destDir if CLI is available
+    if (options.offline !== true) {
+      try {
+        if (verbose) console.log(`[INSTALLING EXTENSION] Attempting CLI install for ${id}...`);
+        cp.execSync(`code --extensions-dir "${destDir}" --install-extension ${id}`, { stdio: 'ignore' });
+        const updatedDestEntries = fs.readdirSync(destDir);
+        const installedMatch = updatedDestEntries.find(entry => entry.toLowerCase().startsWith(id.toLowerCase()));
+        if (installedMatch) {
+          foundMap[id] = installedMatch;
+          if (verbose) console.log(`[SUCCESSFULLY INSTALLED] ${id} -> ${installedMatch}`);
+        } else {
+          if (verbose) console.warn(`[WARN] Installation command completed but ${id} not found in ${destDir}`);
+        }
+      } catch (err) {
+        if (verbose) console.warn(`[WARN] CLI install failed for ${id}: ${err.message}`);
       }
-      vegaList.push({
-        identifier: { id },
-        version,
-        location: { $mid: 1, path: `/c:/Users/heman/.vega/extensions/${match}`, scheme: "file" },
-        relativeLocation: match
-      });
-      console.log(`[REGISTERED IN MANIFEST] ${id} (${version})`);
+    }
+  });
+
+  // Update ~/.vega/extensions/extensions.json manifest
+  const srcExtJsonPath = path.join(srcDir, 'extensions.json');
+  const destExtJsonPath = path.join(destDir, 'extensions.json');
+
+  let vegaList = [];
+  if (fs.existsSync(destExtJsonPath)) {
+    try {
+      vegaList = JSON.parse(fs.readFileSync(destExtJsonPath, 'utf8'));
+      if (!Array.isArray(vegaList)) throw new TypeError('Expected an array.');
+    } catch (err) {
+      throw new Error(`Could not read extension manifest ${destExtJsonPath}: ${err.message}`, { cause: err });
+    }
+  } else if (fs.existsSync(srcExtJsonPath)) {
+    try {
+      vegaList = JSON.parse(fs.readFileSync(srcExtJsonPath, 'utf8'));
+      if (!Array.isArray(vegaList)) throw new TypeError('Expected an array.');
+    } catch (err) {
+      throw new Error(`Could not read source extension manifest ${srcExtJsonPath}: ${err.message}`, { cause: err });
     }
   }
-});
 
-fs.writeFileSync(destExtJsonPath, JSON.stringify(vegaList, null, 2), 'utf8');
-console.log(`Updated ${destExtJsonPath} with ${vegaList.length} verified extensions.`);
+  const currentDestEntries = fs.readdirSync(destDir);
+  requiredIds.forEach(id => {
+    const match = currentDestEntries.find(entry => entry.toLowerCase().startsWith(id.toLowerCase()));
+    if (match) {
+      const existing = vegaList.some(item => {
+        const existingId = (item.identifier && item.identifier.id) || '';
+        return existingId.toLowerCase() === id.toLowerCase() || (item.relativeLocation && item.relativeLocation.toLowerCase().startsWith(id.toLowerCase()));
+      });
+      if (!existing) {
+        let version = "1.0.0";
+        const pkgPath = path.join(destDir, match, 'package.json');
+        if (fs.existsSync(pkgPath)) {
+          try {
+            const pkg = JSON.parse(fs.readFileSync(pkgPath, 'utf8'));
+            version = pkg.version || version;
+          } catch (err) {
+            throw new Error(`Could not parse extension manifest ${pkgPath}: ${err.message}`, { cause: err });
+          }
+        }
+        vegaList.push({
+          identifier: { id },
+          version,
+          location: { $mid: 1, path: `/${destDir.replace(/\\/g, '/')}/${match}`, scheme: "file" },
+          relativeLocation: match
+        });
+        if (verbose) console.log(`[REGISTERED IN MANIFEST] ${id} (${version})`);
+      }
+    }
+  });
 
-console.log('=== PHASE 2 COMPLETE ===');
+  fs.writeFileSync(destExtJsonPath, JSON.stringify(vegaList, null, 2), 'utf8');
+  if (verbose) console.log(`Updated ${destExtJsonPath} with ${vegaList.length} verified extensions.`);
+  if (verbose) console.log('=== ESSENTIAL EXTENSION SYNC COMPLETE ===');
+  return { success: true, count: vegaList.length };
+}
+
+if (require.main === module) {
+  try {
+    syncEssentialExtensions();
+  } catch (err) {
+    console.error('[ERROR] syncEssentialExtensions failed:', err);
+    process.exit(1);
+  }
+}
+
+module.exports = { syncEssentialExtensions };

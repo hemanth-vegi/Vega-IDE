@@ -32,3 +32,23 @@ node-compile-cache/
 run_out.txt
 out/
 .env*
+
+# === SECURITY & PRIVACY EXCLUSIONS ===
+.env
+.env.*
+!.env.example
+*.db
+*.db-wal
+*.db-shm
+*.sqlite
+*.sqlite3
+*.log
+*.bak
+*.bak*
+*.pdf
+backups/
+continue_bak/
+vega-data/
+vscode-win32-x64/
+node_modules/
+__pycache__/

@@ -1,4 +1,13 @@
 {
+  "name": "vega-ide-build",
+  "version": "1.0.0",
+  "description": "Vega Integrated Development Environment build pipeline",
+  "scripts": {
+    "build:vega": "node build_vega.js",
+    "verify:vega": "node verify_vega_build.js",
+    "build:dry-run": "node build_vega.js --dry-run",
+    "embed:icon": "node embed_icon.js"
+  },
   "dependencies": {
     "rcedit": "^5.0.2"
   }

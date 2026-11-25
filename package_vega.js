@@ -1,191 +1,173 @@
+/**
+ * Vega IDE Assembly and Packaging Module
+ * 
+ * Reusable, idempotent assembly of the Vega IDE distribution.
+ */
+
 const fs = require('fs');
 const path = require('path');
-const cp = require('child_process');
+const config = require('./vega.config.js');
 
-console.log('=== STARTING VEGA IDE ASSEMBLY & PACKAGING ===');
+async function packageVega(options = {}) {
+  const verbose = options.verbose !== false;
+  if (verbose) console.log('=== STARTING VEGA IDE ASSEMBLY & PACKAGING ===');
 
-const srcBase = 'C:/Users/heman/AppData/Local/Programs/Microsoft VS Code';
-const commitDir = '69047191fc';
-const targetDir = 'C:/CloudLab/Vega-IDE-Build/vscode-win32-x64';
-const continueInjectedDir = 'C:/CloudLab/Vega-IDE-Build/vscode/extensions/continue';
+  const srcBase = config.SRC_BASE;
+  const targetDir = config.TARGET_DIR;
+  const continueInjectedDir = path.join(config.ROOT_DIR, 'vscode', 'extensions', 'continue');
 
-function copyRecursiveSync(src, dest) {
-  const exists = fs.existsSync(src);
-  const stats = exists && fs.statSync(src);
-  const isDirectory = exists && stats.isDirectory();
-  if (isDirectory) {
-    if (!fs.existsSync(dest)) {
-      fs.mkdirSync(dest, { recursive: true });
-    }
-    fs.readdirSync(src).forEach((childItemName) => {
-      copyRecursiveSync(path.join(src, childItemName), path.join(dest, childItemName));
-    });
-  } else {
+  if (!fs.existsSync(targetDir)) {
+    fs.mkdirSync(targetDir, { recursive: true });
+  }
+
+  // 1. Copy top-level executables and assets from VS Code source base if present
+  if (fs.existsSync(srcBase)) {
+    if (verbose) console.log(`[BASE] Copying base application files from ${srcBase}...`);
     try {
-      fs.copyFileSync(src, dest);
-    } catch (err) {
-      if (['EBUSY', 'EPERM', 'EACCES', 'UNKNOWN'].includes(err.code) || err.errno === -4094 || err.errno === -4082) {
-        console.warn(`[LOCKED] Skipping busy file: ${dest}`);
-      } else {
-        throw err;
-      }
-    }
-  }
-}
-
-// 1. Copy top-level executables and assets
-console.log('Copying base application files...');
-const topFiles = fs.readdirSync(srcBase);
-for (const file of topFiles) {
-  const fullSrc = path.join(srcBase, file);
-  const stat = fs.statSync(fullSrc);
-  if (stat.isFile()) {
-    const fullDest = path.join(targetDir, file);
-    try {
-      fs.copyFileSync(fullSrc, fullDest);
-    } catch (err) {
-      if (err.code === 'EBUSY') {
-        console.warn(`[LOCKED] Skipping busy file: ${fullDest}`);
-      } else {
-        throw err;
-      }
-    }
-  }
-}
-
-// Ensure vega.exe exists
-const codeExe = path.join(targetDir, 'Code.exe');
-const vegaExe = path.join(targetDir, 'vega.exe');
-try {
-  fs.copyFileSync(codeExe, vegaExe);
-  console.log('Created vega.exe from core executable.');
-} catch (err) {
-  if (err.code === 'EBUSY') {
-    console.log('vega.exe is currently in use; keeping existing executable intact.');
-  } else {
-    throw err;
-  }
-}
-
-// Also create vega.VisualElementsManifest.xml
-const vegaManifest = path.join(targetDir, 'vega.VisualElementsManifest.xml');
-if (fs.existsSync(path.join(targetDir, 'Code.VisualElementsManifest.xml'))) {
-  try {
-    fs.copyFileSync(path.join(targetDir, 'Code.VisualElementsManifest.xml'), vegaManifest);
-  } catch (err) {
-    if (err.code !== 'EBUSY') throw err;
-  }
-}
-
-// 2. Copy commit folder assets
-console.log('Copying runtime engine and libraries from commit directory...');
-const commitPath = path.join(srcBase, commitDir);
-if (fs.existsSync(commitPath)) {
-  // Copy all files and folders in commitDir to target root
-  const commitItems = fs.readdirSync(commitPath);
-  for (const item of commitItems) {
-    const s = path.join(commitPath, item);
-    const d = path.join(targetDir, item);
-    console.log(`Copying ${item}...`);
-    copyRecursiveSync(s, d);
-  }
-  // Also keep a copy inside commitDir in targetDir for path resolution compatibility
-  const targetCommitDir = path.join(targetDir, commitDir);
-  if (!fs.existsSync(targetCommitDir)) {
-    fs.mkdirSync(targetCommitDir, { recursive: true });
-  }
-  for (const item of commitItems) {
-    const s = path.join(commitPath, item);
-    const d = path.join(targetCommitDir, item);
-    copyRecursiveSync(s, d);
-  }
-}
-
-// 3. Rebrand product.json
-console.log('Applying surgical Vega IDE rebranding to product.json...');
-const productPaths = [
-  path.join(targetDir, 'resources/app/product.json'),
-  path.join(targetDir, commitDir, 'resources/app/product.json')
-];
-
-for (const p of productPaths) {
-  if (fs.existsSync(p)) {
-    const prod = JSON.parse(fs.readFileSync(p, 'utf8'));
-    prod.nameShort = "Vega IDE";
-    prod.nameLong = "Vega Integrated Development Environment";
-    prod.applicationName = "vega";
-    prod.dataFolderName = ".vega";
-    prod.win32MutexName = "vega";
-    prod.urlProtocol = "vega";
-    prod.win32DirName = "Vega IDE";
-    prod.win32NameVersion = "Vega IDE";
-    prod.win32AppUserModelId = "Vega.VegaIDE";
-    prod.win32ShellNameShort = "Vega";
-    
-    // Register Continue built-in extension in product.json
-    if (!prod.builtInExtensions) {
-      prod.builtInExtensions = [];
-    }
-    if (!prod.builtInExtensions.some(e => e.name === 'continue')) {
-      prod.builtInExtensions.push({
-        name: "continue",
-        version: "2.0.0",
-        repo: "https://github.com/continuedev/continue",
-        metadata: {
-          id: "continue.continue",
-          publisherId: {
-            publisherId: "continue",
-            publisherName: "continue",
-            displayName: "Continue",
-            flags: "public"
-          },
-          publisherDisplayName: "Continue"
+      const topFiles = fs.readdirSync(srcBase);
+      for (const file of topFiles) {
+        if (file.startsWith('is-') && file.endsWith('.tmp')) continue;
+        const fullSrc = path.join(srcBase, file);
+        if (!fs.existsSync(fullSrc)) continue;
+        const stat = fs.statSync(fullSrc);
+        if (stat.isFile()) {
+          const fullDest = path.join(targetDir, file);
+          try {
+            fs.copyFileSync(fullSrc, fullDest);
+          } catch (err) {
+            throw new Error(`Failed to copy base application file ${fullSrc} to ${fullDest}: ${err.message}`, { cause: err });
+          }
         }
-      });
+      }
+    } catch (err) {
+      throw new Error(`Could not copy base application files from ${srcBase}: ${err.message}`, { cause: err });
     }
-    fs.writeFileSync(p, JSON.stringify(prod, null, '\t'), 'utf8');
-    console.log(`Rebranded ${p}`);
+  } else {
+    if (verbose) console.log(`[INFO] Source base ${srcBase} not found; using existing ${targetDir} binaries.`);
   }
-}
 
-// 4. Inject Continue AI extension
-console.log('Injecting Continue AI extension with hardwired Orchestrator into resources/app/extensions/continue...');
-const extDestinations = [
-  path.join(targetDir, 'resources/app/extensions/continue'),
-  path.join(targetDir, commitDir, 'resources/app/extensions/continue')
-];
+  // 2. Ensure Vega always uses the same VS Code runtime version as Code.exe.
+  const codeExe = path.join(targetDir, 'Code.exe');
+  const vegaExe = config.syncVegaExecutable(codeExe);
+  if (verbose) console.log(`[SYNCHRONIZED] ${vegaExe} from ${codeExe}`);
 
-for (const dest of extDestinations) {
-  copyRecursiveSync(continueInjectedDir, dest);
-  console.log(`Injected Continue extension into ${dest}`);
-}
-
-// 5. Inject Orchestrator Chat extension
-console.log('Injecting Orchestrator Chat extension into resources/app/extensions/orchestrator-chat...');
-const orchSource = 'C:/Users/heman/AI-Agent-Orchestrator/orchestrator-chat-extension';
-const orchDestinations = [
-  path.join(targetDir, 'resources/app/extensions/orchestrator-chat'),
-  path.join(targetDir, commitDir, 'resources/app/extensions/orchestrator-chat')
-];
-
-for (const dest of orchDestinations) {
-  copyRecursiveSync(orchSource, dest);
-  console.log(`Injected Orchestrator Chat extension into ${dest}`);
-}
-
-// 6. Inject Vega AI Monitor telemetry extension
-const monitorSource = 'C:/Users/heman/AI-Agent-Workspace/vega-ai-monitor';
-if (fs.existsSync(monitorSource)) {
-  console.log('Injecting Vega AI Monitor extension into resources/app/extensions/vega-ai-monitor...');
-  const monitorDestinations = [
-    path.join(targetDir, 'resources/app/extensions/vega-ai-monitor'),
-    path.join(targetDir, commitDir, 'resources/app/extensions/vega-ai-monitor')
-  ];
-  for (const dest of monitorDestinations) {
-    copyRecursiveSync(monitorSource, dest);
-    console.log(`Injected Vega AI Monitor extension into ${dest}`);
+  // Also create/update vega.VisualElementsManifest.xml
+  const vegaManifest = path.join(targetDir, 'vega.VisualElementsManifest.xml');
+  const codeManifest = path.join(targetDir, 'Code.VisualElementsManifest.xml');
+  if (fs.existsSync(codeManifest) && !fs.existsSync(vegaManifest)) {
+    try {
+      fs.copyFileSync(codeManifest, vegaManifest);
+    } catch (err) {
+      throw new Error(`Failed to copy ${codeManifest} to ${vegaManifest}: ${err.message}`, { cause: err });
+    }
   }
+
+  // 3. Copy commit folder assets if source commit folder exists
+  if (fs.existsSync(srcBase)) {
+    try {
+      const srcEntries = fs.readdirSync(srcBase);
+      for (const entry of srcEntries) {
+        if (!/^[0-9a-f]{10}$/i.test(entry)) continue;
+        const fullSrc = path.join(srcBase, entry);
+        if (!fs.existsSync(fullSrc)) continue;
+        const stat = fs.statSync(fullSrc);
+        if (stat.isDirectory()) {
+          if (verbose) console.log(`[COMMIT ASSETS] Found commit directory ${entry} in source base, syncing...`);
+          const destCommit = path.join(targetDir, entry);
+          config.copyRecursiveSync(fullSrc, destCommit);
+          config.copyRecursiveSync(fullSrc, targetDir);
+        }
+      }
+    } catch (err) {
+      throw new Error(`Failed to synchronize VS Code commit assets from ${srcBase}: ${err.message}`, { cause: err });
+    }
+
+    // Sync bin directory and generate vega CLI launchers
+    const srcBin = path.join(srcBase, 'bin');
+    const destBin = path.join(targetDir, 'bin');
+    if (fs.existsSync(srcBin)) {
+      config.copyRecursiveSync(srcBin, destBin);
+      const codeCmd = path.join(destBin, 'code.cmd');
+      const cleanCodeCmd = `@echo off\r\nsetlocal\r\nset VSCODE_DEV=\r\nset ELECTRON_RUN_AS_NODE=1\r\n"%~dp0..\\Code.exe" "%~dp0..\\resources\\app\\out\\cli.js" %*\r\nIF %ERRORLEVEL% NEQ 0 EXIT /b %ERRORLEVEL%\r\nendlocal\r\n`;
+      fs.writeFileSync(codeCmd, cleanCodeCmd, 'utf8');
+
+      const vegaCmd = path.join(destBin, 'vega.cmd');
+      const cleanVegaCmd = `@echo off\r\nsetlocal\r\nset VSCODE_DEV=\r\nset ELECTRON_RUN_AS_NODE=1\r\n"%~dp0..\\vega.exe" "%~dp0..\\resources\\app\\out\\cli.js" %*\r\nIF %ERRORLEVEL% NEQ 0 EXIT /b %ERRORLEVEL%\r\nendlocal\r\n`;
+      fs.writeFileSync(vegaCmd, cleanVegaCmd, 'utf8');
+
+      const vegaSh = path.join(destBin, 'vega');
+      const cleanVegaSh = `#!/usr/bin/env sh\nELECTRON_RUN_AS_NODE=1 exec "$(dirname "$0")/../vega.exe" "$(dirname "$0")/../resources/app/out/cli.js" "$@"\n`;
+      fs.writeFileSync(vegaSh, cleanVegaSh, 'utf8');
+      if (verbose) console.log(`[CLI SYNCED] Synced bin scripts: vega.cmd, code.cmd in ${destBin}`);
+    }
+  }
+
+  // 4. Rebrand product.json across all discovered active app directories
+  if (verbose) console.log('[BRANDING] Applying surgical Vega IDE rebranding to product.json...');
+  const appDirs = config.getActiveAppDirs(targetDir);
+  for (const app of appDirs) {
+    config.patchProductJson(app.productJson);
+  }
+
+  // Also patch vscode/product.json if it exists
+  const vscodeProduct = path.join(config.ROOT_DIR, 'vscode', 'product.json');
+  if (fs.existsSync(vscodeProduct)) {
+    config.patchProductJson(vscodeProduct);
+  }
+
+  // 5. Inject Continue AI extension
+  if (fs.existsSync(continueInjectedDir)) {
+    if (verbose) console.log('[INJECT] Injecting Continue AI extension into active app directories...');
+    for (const app of appDirs) {
+      const dest = path.join(app.appDir, 'extensions', 'continue');
+      config.copyRecursiveSync(continueInjectedDir, dest);
+      if (verbose) console.log(`[INJECTED CONTINUE] ${dest}`);
+    }
+  }
+
+  // 6. Inject Orchestrator Chat extension
+  const orchSource = options.orchSource || path.join(config.USER_HOME, 'AI-Agent-Orchestrator', 'orchestrator-chat-extension');
+  if (fs.existsSync(orchSource)) {
+    if (verbose) console.log(`[INJECT] Injecting Orchestrator Chat extension from ${orchSource}...`);
+    for (const app of appDirs) {
+      const dest = path.join(app.appDir, 'extensions', 'orchestrator-chat');
+      config.copyRecursiveSync(orchSource, dest);
+      if (verbose) console.log(`[INJECTED ORCHESTRATOR] ${dest}`);
+    }
+  }
+
+  // 7. Inject Vega AI Monitor telemetry extension if available
+  const monitorSource = path.join(config.USER_HOME, 'AI-Agent-Workspace', 'vega-ai-monitor');
+  if (fs.existsSync(monitorSource)) {
+    if (verbose) console.log(`[INJECT] Injecting Vega AI Monitor extension from ${monitorSource}...`);
+    for (const app of appDirs) {
+      const dest = path.join(app.appDir, 'extensions', 'vega-ai-monitor');
+      config.copyRecursiveSync(monitorSource, dest);
+      if (verbose) console.log(`[INJECTED MONITOR] ${dest}`);
+    }
+  }
+
+  // 8. Inject the optional, disabled-by-default Vega context provider.
+  const contextProviderSource = path.join(config.ROOT_DIR, 'integrations');
+  if (fs.existsSync(path.join(contextProviderSource, 'package.json')) &&
+      fs.existsSync(path.join(contextProviderSource, 'vega_context_provider.js'))) {
+    if (verbose) console.log('[INJECT] Injecting optional Vega Context Bridge extension...');
+    for (const app of appDirs) {
+      const dest = path.join(app.appDir, 'extensions', 'vega-context-provider');
+      config.copyRecursiveSync(contextProviderSource, dest);
+      if (verbose) console.log(`[INJECTED VEGA CONTEXT PROVIDER] ${path.basename(app.appDir)}`);
+    }
+  }
+
+  if (verbose) console.log('=== VEGA IDE ASSEMBLY COMPLETE ===');
+  return { success: true };
 }
 
-console.log('=== VEGA IDE ASSEMBLY COMPLETE ===');
+if (require.main === module) {
+  packageVega().catch(err => {
+    console.error('[ERROR] packageVega failed:', err);
+    process.exit(1);
+  });
+}
 
+module.exports = { packageVega };

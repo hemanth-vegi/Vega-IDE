@@ -1,81 +1,23 @@
+/**
+ * Vega IDE Consolidation & Lock-In Module
+ * 
+ * 1. Product.json branding consolidation
+ * 2. Internal icon branding + idempotent workbench CSS purge
+ * 3. Continue Orchestrator config lock-in (clean UTF-8 \u26A1, guarded mkdir)
+ * 4. Developer settings.json lock-in
+ */
+
 const fs = require('fs');
 const path = require('path');
-const os = require('os');
+const config = require('./vega.config.js');
+const { applyInternalBranding, getVegaIconDataUri } = require('./apply_internal_branding.js');
 
-console.log('=== EXECUTING PHASES 3 & 4 ===');
+const VEGA_CSS_START = '/* === VEGA IDE START === */';
+const VEGA_CSS_END = '/* === VEGA IDE END === */';
 
-// ==========================================
-// PHASE 3.1: Patch product.json files
-// ==========================================
-console.log('--- Patching product.json across all directories ---');
-const productJsonPaths = [
-  'C:/CloudLab/Vega-IDE-Build/vscode-win32-x64/dcd3ad6e36/resources/app/product.json',
-  'C:/CloudLab/Vega-IDE-Build/vscode-win32-x64/69047191fc/resources/app/product.json',
-  'C:/CloudLab/Vega-IDE-Build/vscode-win32-x64/resources/app/product.json',
-  'C:/CloudLab/Vega-IDE-Build/vscode/product.json'
-];
+const VEGA_ICON_DATA_URI = getVegaIconDataUri();
 
-productJsonPaths.forEach(p => {
-  if (!fs.existsSync(p)) {
-    // If parent directory exists, we can write it
-    const parent = path.dirname(p);
-    if (!fs.existsSync(parent)) return;
-  }
-
-  let prod = {};
-  if (fs.existsSync(p)) {
-    try {
-      prod = JSON.parse(fs.readFileSync(p, 'utf8'));
-    } catch (e) {
-      console.warn(`Error reading ${p}: ${e.message}`);
-    }
-  }
-
-  // Identity
-  prod.nameShort = "Vega IDE";
-  prod.nameLong = "Vega Integrated Development Environment";
-  prod.applicationName = "vega";
-  prod.dataFolderName = ".vega";
-  prod.win32MutexName = "vega";
-  prod.urlProtocol = "vega";
-  prod.win32DirName = "Vega IDE";
-  prod.win32NameVersion = "Vega IDE";
-  prod.win32AppUserModelId = "Vega.VegaIDE";
-  prod.win32ShellNameShort = "Vega";
-
-  // Remove checksums completely to prevent corrupt installation banners
-  delete prod.checksums;
-  delete prod.checksumFailMoreInfoUrl;
-
-  // Remove Copilot & Microsoft Chat agents
-  delete prod.defaultChatAgent;
-  delete prod.chatWelcomeView;
-  delete prod.walkthroughs;
-  delete prod.chatParticipantRegistry;
-  delete prod.chatSessionRecommendations;
-  delete prod.copilotVersions;
-
-  // Ensure Open VSX extension gallery
-  prod.extensionsGallery = {
-    serviceUrl: "https://open-vsx.org/vscode/gallery",
-    itemUrl: "https://open-vsx.org/vscode/item",
-    resourceUrlTemplate: "https://open-vsx.org/vscode/unpkg/{publisher}/{name}/{version}/{path}"
-  };
-
-  fs.writeFileSync(p, JSON.stringify(prod, null, '\t'), 'utf8');
-  console.log(`[PRODUCT.JSON PATCHED] ${p}`);
-});
-
-// ==========================================
-// PHASE 3.2: Patch workbench.desktop.main.css
-// ==========================================
-console.log('--- Patching workbench.desktop.main.css across all build directories ---');
-const cssPaths = [
-  'C:/CloudLab/Vega-IDE-Build/vscode-win32-x64/dcd3ad6e36/resources/app/out/vs/workbench/workbench.desktop.main.css',
-  'C:/CloudLab/Vega-IDE-Build/vscode-win32-x64/69047191fc/resources/app/out/vs/workbench/workbench.desktop.main.css'
-];
-
-const cssRulesToAppend = `
+const VEGA_CSS_BLOCK = `${VEGA_CSS_START}
 /* === VEGA IDE: PURGE COPILOT & SIGN-IN UI === */
 .monaco-workbench .part.editor .gettingStartedContainer .gettingStartedSlideCategories > .gettingStartedCategoriesContainer > .categories-column-right,
 .monaco-workbench .part.editor .gettingStartedContainer .walkthroughs-column,
@@ -98,75 +40,155 @@ const cssRulesToAppend = `
 .monaco-workbench a[href*="copilot"] {
     display: none !important;
 }
-`;
+/* === VEGA IDE: INTERNAL ICONS === */
+.monaco-workbench .part.titlebar .window-appicon:not(.codicon) {
+    background-image: url("${VEGA_ICON_DATA_URI}") !important;
+    background-size: contain !important;
+    background-repeat: no-repeat !important;
+    background-position: center !important;
+}
+.file-icons-enabled .show-file-icons .vscode_getting_started_page-name-file-icon.file-icon:before {
+    background-image: url("${VEGA_ICON_DATA_URI}") !important;
+    background-size: contain !important;
+    background-repeat: no-repeat !important;
+    background-position: center !important;
+    mask: none !important;
+    -webkit-mask: none !important;
+}
+${VEGA_CSS_END}`;
 
-cssPaths.forEach(cssPath => {
-  if (fs.existsSync(cssPath)) {
-    let css = fs.readFileSync(cssPath, 'utf8');
-    if (!css.includes('VEGA IDE: PURGE COPILOT & SIGN-IN UI')) {
-      css += '\n' + cssRulesToAppend;
-      fs.writeFileSync(cssPath, css, 'utf8');
-      console.log(`[CSS PATCHED] ${cssPath}`);
-    } else {
-      // Replace existing block with the updated complete block
-      css = css.replace(/\/\* === VEGA IDE: PURGE COPILOT & SIGN-IN UI === \*\/[\s\S]*?display: none !important;\s*\}/g, '');
-      css += '\n' + cssRulesToAppend;
-      fs.writeFileSync(cssPath, css, 'utf8');
-      console.log(`[CSS RE-APPLIED] ${cssPath}`);
+function applyConsolidationAndLockin(options = {}) {
+  const verbose = options.verbose !== false;
+  if (verbose) console.log('=== PHASE: CONSOLIDATION & LOCK-IN ===');
+
+  // ==========================================
+  // PHASE 3.1: Patch product.json files
+  // ==========================================
+  if (verbose) console.log('--- Patching product.json across all active directories ---');
+  const appDirs = config.getActiveAppDirs();
+  for (const app of appDirs) {
+    config.patchProductJson(app.productJson);
+  }
+  const vscodeProduct = path.join(config.ROOT_DIR, 'vscode', 'product.json');
+  if (fs.existsSync(vscodeProduct)) {
+    config.patchProductJson(vscodeProduct);
+  }
+
+  // ==========================================
+  // PHASE 3.2: Replace remaining internal VS Code icons
+  // ==========================================
+  applyInternalBranding({ verbose });
+
+  // ==========================================
+  // PHASE 3.3: Patch workbench.desktop.main.css (Idempotent)
+  // ==========================================
+  if (verbose) console.log('--- Idempotent CSS purge in workbench.desktop.main.css ---');
+  const cssRegex = new RegExp(`${escapeRegex(VEGA_CSS_START)}[\\s\\S]*?${escapeRegex(VEGA_CSS_END)}`, 'g');
+  // Also clean any legacy un-bracketed blocks
+  const legacyRegex = /\/\* === VEGA IDE: PURGE COPILOT & SIGN-IN UI === \*\/[\s\S]*?display: none !important;\s*\}/g;
+
+  for (const app of appDirs) {
+    const cssPath = app.cssPath;
+    if (fs.existsSync(cssPath)) {
+      try {
+        let css = fs.readFileSync(cssPath, 'utf8');
+        // Remove legacy unbracketed block if present
+        css = css.replace(legacyRegex, '').trim();
+
+        const hadPatch = css.includes(VEGA_CSS_START) || css.includes(VEGA_CSS_END);
+        css = css.replace(cssRegex, '').trimEnd();
+        if (css.includes(VEGA_CSS_START) || css.includes(VEGA_CSS_END)) {
+          throw new Error(`Found an incomplete Vega CSS patch block in ${cssPath}`);
+        }
+        css = `${css}\n${VEGA_CSS_BLOCK}\n`;
+        if (verbose) console.log(`[CSS ${hadPatch ? 'REPLACED IDEMPOTENTLY' : 'APPLIED'}] ${cssPath}`);
+        fs.writeFileSync(cssPath, css, 'utf8');
+      } catch (err) {
+        throw new Error(`Failed to patch CSS at ${cssPath}: ${err.message}`, { cause: err });
+      }
     }
   }
-});
 
-// ==========================================
-// PHASE 4.1: Lock In Continue Orchestrator Config
-// ==========================================
-console.log('--- Locking in Auto-Failover Orchestrator configuration ---');
-const continueJsonPath = path.join(os.homedir(), '.continue', 'config.json');
-const continueYamlPath = path.join(os.homedir(), '.continue', 'config.yaml');
+  // ==========================================
+  // PHASE 4.1: Lock In Continue Orchestrator Config (Clean UTF-8 \u26A1)
+  // ==========================================
+  if (verbose) console.log('--- Locking in Auto-Failover Orchestrator configuration ---');
+  const continueDir = path.join(config.USER_HOME, '.continue');
+  const continueJsonPath = path.join(continueDir, 'config.json');
+  const continueYamlPath = path.join(continueDir, 'config.yaml');
 
-const continueConfig = {
-  models: [
-    {
-      title: "⚡ Auto-Failover Orchestrator (10-Model Cascade)",
-      name: "Auto-Failover Orchestrator (10-Model Cascade)",
-      provider: "openai",
-      model: "auto-failover-orchestrator",
-      apiBase: "http://127.0.0.1:8765/v1",
-      apiKey: "local-orchestrator",
-      roles: ["chat", "edit", "apply"]
-    },
-    {
+  fs.mkdirSync(continueDir, { recursive: true });
+
+  const pythonExe = config.resolvePythonInterpreter();
+  const mcpServerScript = path.join(config.USER_HOME, 'AI-Agent-Orchestrator', 'orchestrator_mcp_server.py');
+
+  const cascadeTitle = "\u26A1 Auto-Failover Orchestrator (10-Model Cascade)";
+
+  const continueConfig = {
+    models: [
+      {
+        title: cascadeTitle,
+        name: "Auto-Failover Orchestrator (10-Model Cascade)",
+        provider: "openai",
+        model: "auto-failover-orchestrator",
+        apiBase: "http://127.0.0.1:8765/v1",
+        apiKey: "local-orchestrator",
+        roles: ["chat", "edit", "apply"]
+      },
+      {
+        title: "Qwen2.5-Coder 3B (Local Fallback)",
+        name: "Qwen2.5-Coder 3B (Local Fallback)",
+        provider: "ollama",
+        model: "qwen2.5-coder-backup:3b",
+        roles: ["chat"]
+      }
+    ],
+    tabAutocompleteModel: {
       title: "Qwen2.5-Coder 3B (Local Fallback)",
-      name: "Qwen2.5-Coder 3B (Local Fallback)",
       provider: "ollama",
-      model: "qwen2.5-coder-backup:3b",
-      roles: ["chat"]
-    }
-  ],
-  tabAutocompleteModel: {
-    title: "Qwen2.5-Coder 3B (Local Fallback)",
-    provider: "ollama",
-    model: "qwen2.5-coder-backup:3b"
-  },
-  mcpServers: [
-    {
-      name: "orchestrator",
-      command: "C:/Users/heman/AppData/Local/Programs/Python/Python311/python.exe",
-      args: [
-        "C:/Users/heman/AI-Agent-Orchestrator/orchestrator_mcp_server.py"
-      ]
-    }
-  ]
-};
+      model: "qwen2.5-coder-backup:3b"
+    },
+    mcpServers: [
+      {
+        name: "orchestrator",
+        command: pythonExe.replace(/\\/g, '/'),
+        args: [
+          mcpServerScript.replace(/\\/g, '/')
+        ]
+      }
+    ]
+  };
 
-fs.writeFileSync(continueJsonPath, JSON.stringify(continueConfig, null, 2), 'utf8');
-console.log(`[CONTINUE CONFIG.JSON LOCKED] ${continueJsonPath}`);
+  let existingContinueConfig = {};
+  if (fs.existsSync(continueJsonPath)) {
+    try {
+      existingContinueConfig = JSON.parse(fs.readFileSync(continueJsonPath, 'utf8'));
+    } catch (err) {
+      throw new Error(`Could not parse Continue config ${continueJsonPath}: ${err.message}`, { cause: err });
+    }
+  }
+  const mergedContinueConfig = { ...continueConfig, ...existingContinueConfig };
+  const existingModels = Array.isArray(existingContinueConfig.models) ? existingContinueConfig.models : [];
+  mergedContinueConfig.models = [
+    ...existingModels,
+    ...continueConfig.models.filter(model => !existingModels.some(existing => existing.model === model.model))
+  ];
+  const existingMcpServers = Array.isArray(existingContinueConfig.mcpServers) ? existingContinueConfig.mcpServers : [];
+  mergedContinueConfig.mcpServers = [
+    ...existingMcpServers,
+    ...continueConfig.mcpServers.filter(server => !existingMcpServers.some(existing => existing.name === server.name))
+  ];
+  if (!existingContinueConfig.tabAutocompleteModel) {
+    mergedContinueConfig.tabAutocompleteModel = continueConfig.tabAutocompleteModel;
+  }
+  fs.writeFileSync(continueJsonPath, JSON.stringify(mergedContinueConfig, null, 2), 'utf8');
+  if (verbose) console.log(`[CONTINUE CONFIG.JSON LOCKED] ${continueJsonPath}`);
 
-const yamlContent = `name: Main Config
+  const yamlContent = `name: Main Config
 version: 1.0.0
 schema: v1
 models:
-  - name: "⚡ Auto-Failover Orchestrator (10-Model Cascade)"
+  - name: "${cascadeTitle}"
     provider: openai
     model: auto-failover-orchestrator
     apiBase: http://127.0.0.1:8765/v1
@@ -182,81 +204,114 @@ models:
       - chat
 mcpServers:
   - name: orchestrator
-    command: "C:/Users/heman/AppData/Local/Programs/Python/Python311/python.exe"
+    command: "${pythonExe.replace(/\\/g, '/')}"
     args:
-      - "C:/Users/heman/AI-Agent-Orchestrator/orchestrator_mcp_server.py"
+      - "${mcpServerScript.replace(/\\/g, '/')}"
 `;
-fs.writeFileSync(continueYamlPath, yamlContent, 'utf8');
-console.log(`[CONTINUE CONFIG.YAML LOCKED] ${continueYamlPath}`);
-
-// ==========================================
-// PHASE 4.2: Update settings.json across all profiles
-// ==========================================
-console.log('--- Merging developer defaults into settings.json ---');
-const appData = process.env.APPDATA || path.join(os.homedir(), 'AppData', 'Roaming');
-const userProfile = process.env.USERPROFILE || os.homedir();
-
-const settingsDirs = [
-  path.join(appData, 'vega', 'User'),
-  path.join(appData, 'Vega IDE', 'User'),
-  path.join(appData, '.vega', 'User'),
-  path.join(userProfile, '.vega', 'User'),
-  'C:/CloudLab/Vega-IDE-Build/vega-data/User'
-];
-
-const newSettings = {
-  "window.menuBarVisibility": "classic",
-  "window.commandCenter": true,
-  "workbench.layoutControl.enabled": true,
-  "chat.commandCenter.enabled": false,
-  "chat.disableAIFeatures": true,
-  "telemetry.telemetryLevel": "off",
-  "sync.enable": false,
-  "github.gitAuthentication": false,
-  "extensions.ignoreRecommendations": true,
-  "workbench.tips.enabled": false,
-  "python.defaultInterpreterPath": "C:\\Users\\heman\\AppData\\Local\\Programs\\Python\\Python311\\python.exe",
-  "python.analysis.typeCheckingMode": "basic",
-  "editor.formatOnSave": true,
-  "editor.defaultFormatter": "esbenp.prettier-vscode",
-  "[python]": {
-    "editor.formatOnSave": true
-  },
-  "terminal.integrated.defaultProfile.windows": "PowerShell",
-  "gitlens.launchpad.indicator.enabled": false,
-  "gitlens.plusFeatures.enabled": false
-};
-
-settingsDirs.forEach(dir => {
-  if (!fs.existsSync(dir)) {
-    fs.mkdirSync(dir, { recursive: true });
-  }
-
-  const sFile = path.join(dir, 'settings.json');
-  let currentSettings = {};
-
-  if (fs.existsSync(sFile)) {
-    try {
-      const content = fs.readFileSync(sFile, 'utf8').trim();
-      if (content) currentSettings = JSON.parse(content);
-    } catch (e) {
-      console.warn(`Could not parse ${sFile}: ${e.message}`);
+  if (fs.existsSync(continueYamlPath)) {
+    const existingYaml = fs.readFileSync(continueYamlPath, 'utf8');
+    if (existingYaml.includes('\uFFFD')) {
+      throw new Error(`Continue YAML config contains invalid UTF-8 replacement characters: ${continueYamlPath}`);
     }
+    if (verbose) console.log(`[CONTINUE CONFIG.YAML PRESERVED] ${continueYamlPath}`);
+  } else {
+    fs.writeFileSync(continueYamlPath, yamlContent, 'utf8');
+    if (verbose) console.log(`[CONTINUE CONFIG.YAML CREATED] ${continueYamlPath}`);
   }
 
-  // Preserve existing workbench.colorCustomizations
-  const preservedColors = currentSettings["workbench.colorCustomizations"] || {};
-  const preservedTheme = currentSettings["workbench.colorTheme"] || "Default Dark Modern";
+  // ==========================================
+  // PHASE 4.2: Update settings.json across all profiles
+  // ==========================================
+  if (verbose) console.log('--- Merging developer defaults into settings.json ---');
+  const settingsDirs = [
+    path.join(config.APPDATA, 'vega', 'User'),
+    path.join(config.APPDATA, 'Vega IDE', 'User'),
+    path.join(config.APPDATA, '.vega', 'User'),
+    path.join(config.USER_HOME, '.vega', 'User'),
+    path.join(config.VEGA_DATA_DIR, 'User')
+  ];
 
-  // Merge new functional settings
-  Object.assign(currentSettings, newSettings);
+  // Developer settings with audit documentation:
+  // - chat.disableAIFeatures: Disables built-in Microsoft Copilot features while keeping Orchestrator functional
+  // - chat.commandCenter.enabled: Hides Copilot trigger in command center bar
+  // - github.gitAuthentication: Disables automatic GitHub OAuth popups for local Git repositories
+  // - telemetry.telemetryLevel: Disables telemetry transmission
+  // - sync.enable: Disables Microsoft cloud settings sync
+  const developerSettings = {
+    "window.menuBarVisibility": "classic",
+    "window.commandCenter": true,
+    "workbench.layoutControl.enabled": true,
+    "chat.commandCenter.enabled": false,
+    "chat.disableAIFeatures": true,
+    "telemetry.telemetryLevel": "off",
+    "sync.enable": false,
+    "github.gitAuthentication": false,
+    "extensions.ignoreRecommendations": true,
+    "workbench.tips.enabled": false,
+    "python.defaultInterpreterPath": pythonExe,
+    "python.analysis.typeCheckingMode": "basic",
+    "editor.formatOnSave": true,
+    "editor.defaultFormatter": "esbenp.prettier-vscode",
+    "[python]": {
+      "editor.formatOnSave": true
+    },
+    "terminal.integrated.defaultProfile.windows": "PowerShell",
+    "gitlens.launchpad.indicator.enabled": false,
+    "gitlens.plusFeatures.enabled": false
+  };
 
-  // Re-apply preserved theme & colors
-  currentSettings["workbench.colorTheme"] = preservedTheme;
-  currentSettings["workbench.colorCustomizations"] = preservedColors;
+  settingsDirs.forEach(dir => {
+    if (!fs.existsSync(dir)) {
+      fs.mkdirSync(dir, { recursive: true });
+    }
 
-  fs.writeFileSync(sFile, JSON.stringify(currentSettings, null, 2), 'utf8');
-  console.log(`[SETTINGS.JSON UPDATED] ${sFile}`);
-});
+    const sFile = path.join(dir, 'settings.json');
+    let currentSettings = {};
 
-console.log('=== PHASES 3 & 4 COMPLETE ===');
+    if (fs.existsSync(sFile)) {
+      try {
+        const content = fs.readFileSync(sFile, 'utf8').trim();
+        if (content) currentSettings = JSON.parse(content);
+      } catch (e) {
+        throw new Error(`Could not parse settings file ${sFile}: ${e.message}`, { cause: e });
+      }
+    }
+
+    // Preserve existing colorCustomizations & colorTheme
+    const preservedColors = currentSettings["workbench.colorCustomizations"] || {};
+    const preservedTheme = currentSettings["workbench.colorTheme"] || "Default Dark Modern";
+
+    // Merge new developer settings
+    Object.assign(currentSettings, developerSettings);
+
+    // Re-apply preserved theme & colors
+    currentSettings["workbench.colorTheme"] = preservedTheme;
+    currentSettings["workbench.colorCustomizations"] = preservedColors;
+
+    fs.writeFileSync(sFile, JSON.stringify(currentSettings, null, 2), 'utf8');
+    if (verbose) console.log(`[SETTINGS.JSON UPDATED] ${sFile}`);
+  });
+
+  if (verbose) console.log('=== CONSOLIDATION & LOCK-IN COMPLETE ===');
+  return { success: true };
+}
+
+function escapeRegex(string) {
+  return string.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+if (require.main === module) {
+  try {
+    applyConsolidationAndLockin();
+  } catch (err) {
+    console.error('[ERROR] applyConsolidationAndLockin failed:', err);
+    process.exit(1);
+  }
+}
+
+module.exports = {
+  applyConsolidationAndLockin,
+  VEGA_CSS_START,
+  VEGA_CSS_END,
+  VEGA_CSS_BLOCK
+};

@@ -1,5 +1,8 @@
 import math
+from pathlib import Path
 from PIL import Image, ImageDraw, ImageFilter
+
+root_dir = Path(__file__).resolve().parent
 
 # 1. Generate SVG
 pts = []
@@ -31,9 +34,9 @@ svg_content = f"""<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" 
   <path d="{path_d}" fill="none" stroke="url(#sunsetRed)" stroke-width="48" stroke-linecap="round" stroke-linejoin="round" filter="url(#glow)"/>
 </svg>"""
 
-with open("C:/CloudLab/Vega-IDE-Build/vega_infinity.svg", "w", encoding="utf-8") as f:
+with open(root_dir / "vega_infinity.svg", "w", encoding="utf-8") as f:
     f.write(svg_content)
-print("Saved C:/CloudLab/Vega-IDE-Build/vega_infinity.svg")
+print(f"Saved {root_dir / 'vega_infinity.svg'}")
 
 # 2. Render High-Resolution Icon with Anti-Aliasing and Glowing Sunsetting Red Gradient
 size = 1024
@@ -97,6 +100,6 @@ for i in range(num_pts):
 
 icon_sizes = [(256, 256), (128, 128), (64, 64), (48, 48), (32, 32), (16, 16)]
 imgs = [canvas.resize(s, Image.Resampling.LANCZOS) for s in icon_sizes]
-ico_path = "C:/CloudLab/Vega-IDE-Build/vega_infinity.ico"
+ico_path = root_dir / "vega_infinity.ico"
 imgs[0].save(ico_path, format="ICO", sizes=icon_sizes, append_images=imgs[1:])
 print(f"Saved multi-resolution ICO to {ico_path}")
